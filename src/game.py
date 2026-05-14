@@ -1,4 +1,5 @@
 import random
+from dataclasses import asdict
 from typing import Tuple, Optional, Dict, List
 
 from cards import (
@@ -8,7 +9,6 @@ from cards import (
     GoldCardTemplate,
     ActionCardTemplate,
     ActionType,
-    EquipmentType,
     Direction,
 )
 from actions import (
@@ -28,19 +28,21 @@ from state import (
 )
 from registry import REGISTRY, setup_global_registry
 from board import BoardEngine
+from mc_config import GameConfig, DeckConfig, GoldConfig, RulesConfig
 
 
 class Game:
-    def __init__(self, config: dict = None):
+    def __init__(self, config: Optional[GameConfig] = None):
         reset_card_id_counter()
         setup_global_registry()
 
+        self.config = config or GameConfig()
         self.board_engine = BoardEngine(REGISTRY)
         self.state = MatchState()
 
         self.state.players[0] = PlayerState(player_id=0)
         self.state.players[1] = PlayerState(player_id=1)
-        self.start_positions = {0: (-1, 0), 1: (1, 0)}
+        self.start_positions = self.config.board.start_positions.copy()
 
         self.state.first_player_in_round = random.randint(0, 1)
         self.state.current_player_id = self.state.first_player_in_round
@@ -49,88 +51,54 @@ class Game:
         self._initial_deck_templates = None
         self._initial_gold_deck = None
 
-        self._build_decks()
-        self._setup_board()
-        self._deal_initial_cards()
+        self._build_decks(self.config.deck)
+        self._setup_board(self.config.gold, self.config.board.start_positions)
+        self._deal_initial_cards(self.config.rules)
 
-    def _build_decks(self):
-        if self.state.round_number == 2 and self._initial_deck_templates is not None:
-            deck_template_ids = self._initial_deck_templates.copy()
-            gold_deck = self._initial_gold_deck.copy()
-        else:
-            deck_template_ids = []
-            counts = self.config.copy() if self.config is not None else {
-                "tunnel_cross": 4,
-                "tunnel_t": 4,
-                "tunnel_straight": 4,
-                "tunnel_horizontal": 4,
-                "tunnel_corner_dl": 4,
-                "tunnel_corner_ul": 4,
-                "tunnel_deadend": 2,
-                "tunnel_bridge": 3,
-                "tunnel_double_corner": 2,
-                "tunnel_split_t_up": 2,
-                "tunnel_split_t_l": 2,
-                "door_blue": 2,
-                "door_green": 2,
-                "ladder": 2,
-                "act_boom": 2,
-                "act_key": 2,
-                "act_map": 2,
-                "brk" : 2,
-                "rep" : 2,
-            }
+    def _build_decks(self, deck_cfg: DeckConfig):
+        deck_template_ids = []
+        counts = asdict(deck_cfg)
 
-            for eq in EquipmentType:
-                counts[f"brk_{eq.name}"] = counts.get("brk",0)
-                counts[f"rep_{eq.name}"] = counts.get("rep",0)
-            if counts["brk"] is not None:
-                counts.pop("brk")
-                counts.pop("rep")
+        for t_id, count in counts.items():
+            deck_template_ids.extend([t_id] * count)
 
-            for t_id, count in counts.items():
-                deck_template_ids.extend([t_id] * count)
+        gold_deck = self.config.gold.gold_templates.copy()
 
-            gold_deck = [
-                "gold_1_ud",
-                "gold_1_lr",
-                "gold_2_corner",
-                "gold_2_t",
-                "gold_3_cross",
-                "gold_3_t",
-            ]
-
-            random.shuffle(deck_template_ids)
-            random.shuffle(gold_deck)
-            self._initial_deck_templates = deck_template_ids.copy()
-            self._initial_gold_deck = gold_deck.copy()
+        random.shuffle(deck_template_ids)
+        random.shuffle(gold_deck)
+        self._initial_deck_templates = deck_template_ids.copy()
+        self._initial_gold_deck = gold_deck.copy()
 
         self.state.deck = list(range(1, len(deck_template_ids) + 1))
         self.state.deck_template_ids = deck_template_ids
         self.state.gold_deck = gold_deck
 
-    def _setup_board(self):
-        self.state.board[BoardEngine.coord_to_str(*self.start_positions[0])] = (
-            PlacedCard(template_id="start_blue", owner_id=0, unique_id=9001)
+    def _setup_board(
+        self, gold_cfg: GoldConfig, start_positions: Dict[int, Tuple[int, int]]
+    ):
+        self.state.board[BoardEngine.coord_to_str(*start_positions[0])] = PlacedCard(
+            template_id="start_blue", owner_id=0, unique_id=9001
         )
-        self.state.board[BoardEngine.coord_to_str(*self.start_positions[1])] = (
-            PlacedCard(template_id="start_green", owner_id=1, unique_id=9002)
+        self.state.board[BoardEngine.coord_to_str(*start_positions[1])] = PlacedCard(
+            template_id="start_green", owner_id=1, unique_id=9002
         )
 
-        gold_positions = [(-2, -5), (0, -5), (2, -5), (-1, -7), (1, -7), (0, -9)]
         gold_start_id = 8001
-        for i, pos in enumerate(gold_positions):
+        for i, pos in enumerate(gold_cfg.gold_positions):
             if self.state.gold_deck:
                 g_id = self.state.gold_deck.pop()
                 self.state.board[BoardEngine.coord_to_str(*pos)] = PlacedCard(
                     template_id=g_id, owner_id=None, unique_id=gold_start_id + i
                 )
 
-    def _deal_initial_cards(self):
+    def _deal_initial_cards(self, rules_cfg: RulesConfig):
+        second_player = 1 - self.state.first_player_in_round
         for p_id in [0, 1]:
-            if self.state.round_number == 2:
-                p_id=(p_id+3)%2
-            cards_count = 6
+            cards_count = (
+                rules_cfg.hand_size_second
+                if p_id == second_player
+                else rules_cfg.hand_size_first
+            )
             for _ in range(cards_count):
                 if self.state.deck:
                     card_id = self.state.deck.pop()
@@ -160,8 +128,17 @@ class Game:
 
     def step(self, action: AgentAction) -> Tuple[bool, str, Optional[int]]:
         if self.is_game_over():
-            return False, "Игра уже окончена.", None
-
+            return False, "Игра уже окончена.", None, ""
+        template_id = ""
+        if not isinstance(action, ActionDiscard):
+            p_id = self.state.current_player_id
+            player_state = self.state.players[p_id]
+            lookup_key = (
+                int(action.template_id)
+                if isinstance(action.template_id, str)
+                else action.template_id
+            )
+            template_id = player_state.card_id_to_template.get(lookup_key)
         if isinstance(action, ActionBuild):
             success, msg, rev_gold = self._handle_build(action)
         elif isinstance(action, ActionPlayBoardUtility):
@@ -171,13 +148,13 @@ class Game:
         elif isinstance(action, ActionDiscard):
             success, msg, rev_gold = self._handle_discard(action)
         else:
-            return False, "Неизвестный тип действия.", None
+            return False, "Неизвестный тип действия.", None, ""
 
         if success:
             self.state.current_player_id = 1 - self.state.current_player_id
             self.state.turn_number += 1
 
-        return success, msg, rev_gold
+        return success, msg, rev_gold, template_id
 
     def _handle_build(self, action: ActionBuild) -> Tuple[bool, str, Optional[int]]:
         p_id = self.state.current_player_id
@@ -655,7 +632,10 @@ class Game:
         return False
 
     def is_game_over(self) -> bool:
-        return self.state.is_game_over or self.state.round_number > 2
+        return (
+            self.state.is_game_over
+            or self.state.round_number > self.config.rules.rounds
+        )
 
     def _start_new_round(self):
         round_scores = self.calculate_scores()
@@ -664,15 +644,14 @@ class Game:
         self.state.round_scores = round_scores
 
         self.state.round_number += 1
+        max_rounds = self.config.rules.rounds
 
-        if self.state.round_number > 2:
+        if self.state.round_number > max_rounds:
             self.state.is_game_over = True
             return
 
-        if self.state.round_number == 2:
-            self.state.first_player_in_round = 1 - self.state.first_player_in_round
-        # elif self.state.round_number == 3:
-        #     self.state.first_player_in_round = 1 - self.state.first_player_in_round
+        # Чередование первого игрока каждый раунд
+        self.state.first_player_in_round = 1 - self.state.first_player_in_round
 
         self.state.current_player_id = self.state.first_player_in_round
         self.state.turn_number = 1
@@ -688,10 +667,9 @@ class Game:
             self.state.players[p_id].ladders.clear()
             self.state.players[p_id].card_id_to_template.clear()
 
-        self.start_positions = {1: (-1, 0), 0: (1, 0)}
-        self._build_decks()
-        self._setup_board()
-        self._deal_initial_cards()
+        self._build_decks(self.config.deck)
+        self._setup_board(self.config.gold, self.config.board.start_positions)
+        self._deal_initial_cards(self.config.rules)
 
     def check_round_end(self) -> Tuple[bool, Optional[Dict[int, int]]]:
         if self.is_round_over():
