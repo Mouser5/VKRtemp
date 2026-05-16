@@ -32,9 +32,8 @@ BOT_REGISTRY: Dict[str, Type] = {
     "smart": SmartAgent,
 }
 
-
-def _format_action(action: AgentAction, game: Game, tpl_id) -> str:
-    # tpl_id = getattr(action, "template_id", None)
+def _format_action(action: AgentAction, game: Game) -> str:
+    tpl_id = getattr(action, "template_id", None)
     tpl = REGISTRY.get(tpl_id) if tpl_id else None
     tpl_name = tpl.name if tpl else tpl_id
 
@@ -145,7 +144,7 @@ def run_bot_match(bot1_name: str, bot2_name: str, verbose: bool = True) -> Dict:
                     game.state.current_player_id = 1 - curr_p
                     continue
 
-                success, msg, rev_gold, template_id = game.step(action)
+                success, msg, rev_gold = game.step(action)
                 turn_count += 1
 
                 dsl_lines.append(action_to_dsl(action, curr_p))
@@ -159,9 +158,8 @@ def run_bot_match(bot1_name: str, bot2_name: str, verbose: bool = True) -> Dict:
 
                 if verbose and view:
                     bot_name = bot1_name if curr_p == 0 else bot2_name
-                    action_desc = _format_action(action, game, template_id)
                     print(
-                        f"Ход {turn_count} (Раунд {game.state.round_number}): Игрок {curr_p} ({bot_name}) -> {action_desc}"
+                        f"Ход {turn_count} (Раунд {game.state.round_number}): Игрок {curr_p} ({bot_name}) -> {msg}"
                     )
                     if rev_gold:
                         print(f"  ✨ ЗОЛОТО: {rev_gold} слитков!")
@@ -184,7 +182,7 @@ def run_bot_match(bot1_name: str, bot2_name: str, verbose: bool = True) -> Dict:
                 print(
                     f"Общий счёт: {bot1_name}={game.state.total_scores[0]}, {bot2_name}={game.state.total_scores[1]}"
                 )
-                if game.state.round_number <= 3:
+                if game.state.round_number < 3:
                     first = game.state.first_player_in_round
                     first_name = bot1_name if first == 0 else bot2_name
                     print(f"\n--- РАУНД {game.state.round_number} ---")
@@ -207,7 +205,7 @@ def run_bot_match(bot1_name: str, bot2_name: str, verbose: bool = True) -> Dict:
 
     if verbose and view:
         print("\n=== ИГРА ОКОНЧЕНА ===")
-        print("Итого после 3 раундов:")
+        print("Итого после 2 раундов:")
         print(f"  {bot1_name}: {total_scores[0]} очков")
         print(f"  {bot2_name}: {total_scores[1]} очков")
         if winner:
@@ -238,6 +236,7 @@ def run_benchmark(bot1_name: str, bot2_name: str, num_games: int) -> Dict:
 
     start_time = time.perf_counter()
     total_turns = 0
+    empty_deck=0
     wins = {0: 0, 1: 0, "draw": 0}
     total_errors = 0
 
@@ -255,7 +254,7 @@ def run_benchmark(bot1_name: str, bot2_name: str, num_games: int) -> Dict:
                             game.state.current_player_id = 1 - curr_p
                             continue
 
-                        success, msg, _, _ = game.step(action)
+                        success, msg, _ = game.step(action)
                         # print(msg)
                         if not success:
                             total_errors += 1
@@ -269,6 +268,8 @@ def run_benchmark(bot1_name: str, bot2_name: str, num_games: int) -> Dict:
                 game.check_round_end()
 
             total_scores = game.state.total_scores
+            if not game.state.deck:
+                empty_deck+=1
             if total_scores[0] > total_scores[1]:
                 wins[0] += 1
             elif total_scores[1] > total_scores[0]:
@@ -292,6 +293,7 @@ def run_benchmark(bot1_name: str, bot2_name: str, num_games: int) -> Dict:
     print(f"Победы {bot2_name} (игрок 1): {wins[1]} ({100 * wins[1] / num_games:.1f}%)")
     print(f"Ничьи: {wins['draw']}")
     print("-" * 40)
+    print(f"Пустая колода: {empty_deck}")
     print(f"Всего ходов: {total_turns}")
     print(f"Ошибок: {total_errors}")
     print(f"Время: {elapsed:.2f} сек")

@@ -31,7 +31,7 @@ from board import BoardEngine
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, config: dict = None):
         reset_card_id_counter()
         setup_global_registry()
 
@@ -44,49 +44,66 @@ class Game:
 
         self.state.first_player_in_round = random.randint(0, 1)
         self.state.current_player_id = self.state.first_player_in_round
+        self.config = config if config is not None else None
+
+        self._initial_deck_templates = None
+        self._initial_gold_deck = None
 
         self._build_decks()
         self._setup_board()
         self._deal_initial_cards()
 
     def _build_decks(self):
-        deck_template_ids = []
-        counts = {
-            "tunnel_cross": 10,
-            "tunnel_t": 10,
-            "tunnel_straight": 8,
-            "tunnel_corner": 10,
-            "tunnel_deadend": 4,
-            "tunnel_bridge": 4,
-            "tunnel_double_corner": 4,
-            "tunnel_split_t_up": 4,
-            "tunnel_split_t_l": 4,
-            "door_blue": 3,
-            "door_green": 3,
-            "ladder": 4,
-            "act_boom": 3,
-            "act_key": 3,
-            "act_map": 4,
-        }
+        if self.state.round_number == 2 and self._initial_deck_templates is not None:
+            deck_template_ids = self._initial_deck_templates.copy()
+            gold_deck = self._initial_gold_deck.copy()
+        else:
+            deck_template_ids = []
+            counts = self.config.copy() if self.config is not None else {
+                "tunnel_cross": 4,
+                "tunnel_t": 4,
+                "tunnel_straight": 4,
+                "tunnel_horizontal": 4,
+                "tunnel_corner_dl": 4,
+                "tunnel_corner_ul": 4,
+                "tunnel_deadend": 2,
+                "tunnel_bridge": 3,
+                "tunnel_double_corner": 2,
+                "tunnel_split_t_up": 2,
+                "tunnel_split_t_l": 2,
+                "door_blue": 2,
+                "door_green": 2,
+                "ladder": 2,
+                "act_boom": 2,
+                "act_key": 2,
+                "act_map": 2,
+                "brk" : 2,
+                "rep" : 2,
+            }
 
-        for eq in EquipmentType:
-            counts[f"brk_{eq.name}"] = 3
-            counts[f"rep_{eq.name}"] = 3
+            for eq in EquipmentType:
+                counts[f"brk_{eq.name}"] = counts.get("brk",0)
+                counts[f"rep_{eq.name}"] = counts.get("rep",0)
+            if counts["brk"] is not None:
+                counts.pop("brk")
+                counts.pop("rep")
 
-        for t_id, count in counts.items():
-            deck_template_ids.extend([t_id] * count)
+            for t_id, count in counts.items():
+                deck_template_ids.extend([t_id] * count)
 
-        gold_deck = [
-            "gold_1_ud",
-            "gold_1_lr",
-            "gold_2_corner",
-            "gold_2_t",
-            "gold_3_cross",
-            "gold_3_t",
-        ]
+            gold_deck = [
+                "gold_1_ud",
+                "gold_1_lr",
+                "gold_2_corner",
+                "gold_2_t",
+                "gold_3_cross",
+                "gold_3_t",
+            ]
 
-        random.shuffle(deck_template_ids)
-        random.shuffle(gold_deck)
+            random.shuffle(deck_template_ids)
+            random.shuffle(gold_deck)
+            self._initial_deck_templates = deck_template_ids.copy()
+            self._initial_gold_deck = gold_deck.copy()
 
         self.state.deck = list(range(1, len(deck_template_ids) + 1))
         self.state.deck_template_ids = deck_template_ids
@@ -110,9 +127,10 @@ class Game:
                 )
 
     def _deal_initial_cards(self):
-        second_player = 1 - self.state.first_player_in_round
         for p_id in [0, 1]:
-            cards_count = 5 if p_id == second_player else 4
+            if self.state.round_number == 2:
+                p_id=(p_id+3)%2
+            cards_count = 6
             for _ in range(cards_count):
                 if self.state.deck:
                     card_id = self.state.deck.pop()
@@ -140,19 +158,10 @@ class Game:
         player.hand = card_ids.copy()
         player.card_id_to_template = dict(zip(card_ids, template_ids))
 
-    def step(self, action: AgentAction) -> Tuple[bool, str, Optional[int], str]:
+    def step(self, action: AgentAction) -> Tuple[bool, str, Optional[int]]:
         if self.is_game_over():
-            return False, "Игра уже окончена.", None,""
-        template_id=""
-        if not isinstance(action, ActionDiscard):
-            p_id = self.state.current_player_id
-            player_state = self.state.players[p_id]
-            lookup_key = (
-                int(action.template_id)
-                if isinstance(action.template_id, str)
-                else action.template_id
-            )
-            template_id = player_state.card_id_to_template.get(lookup_key)
+            return False, "Игра уже окончена.", None
+
         if isinstance(action, ActionBuild):
             success, msg, rev_gold = self._handle_build(action)
         elif isinstance(action, ActionPlayBoardUtility):
@@ -162,13 +171,13 @@ class Game:
         elif isinstance(action, ActionDiscard):
             success, msg, rev_gold = self._handle_discard(action)
         else:
-            return False, "Неизвестный тип действия.", None,""
+            return False, "Неизвестный тип действия.", None
 
         if success:
             self.state.current_player_id = 1 - self.state.current_player_id
             self.state.turn_number += 1
 
-        return success, msg, rev_gold,template_id
+        return success, msg, rev_gold
 
     def _handle_build(self, action: ActionBuild) -> Tuple[bool, str, Optional[int]]:
         p_id = self.state.current_player_id
@@ -635,11 +644,13 @@ class Game:
         )
         if unrevealed_gold == 0:
             return True
-        if (
-            not self.state.deck
-            and not self.state.players[0].hand
-            and not self.state.players[1].hand
-        ):
+        if (not self.state.deck and
+                (not self.state.players[1].card_id_to_template or
+                 all("rep_" in word or "brk_" in word or "act_" in word for word in
+                     self.state.players[1].card_id_to_template.values()) and
+                 (not self.state.players[0].card_id_to_template or
+                  all("rep_" in word or "brk_" in word or "act_" in word for word in
+                      self.state.players[0].card_id_to_template.values())))):
             return True
         return False
 
@@ -677,6 +688,7 @@ class Game:
             self.state.players[p_id].ladders.clear()
             self.state.players[p_id].card_id_to_template.clear()
 
+        self.start_positions = {1: (-1, 0), 0: (1, 0)}
         self._build_decks()
         self._setup_board()
         self._deal_initial_cards()

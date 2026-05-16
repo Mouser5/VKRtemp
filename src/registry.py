@@ -42,7 +42,9 @@ def setup_global_registry():
         ("tunnel_cross", "Crossroad", (True, True, True, True)),
         ("tunnel_t", "T-Junction", (True, True, True, False)),
         ("tunnel_straight", "Straight", (True, True, False, False)),
-        ("tunnel_corner", "Corner", (False, True, True, False)),
+        ("tunnel_horizontal", "Horizontal", (False, False, True, True)),
+        ("tunnel_corner_dl", "Corner down", (False, True, True, False)),
+        ("tunnel_corner_ul", "Corner up", (True, False, True, False)),
         ("tunnel_deadend", "Dead End", (True, False, False, False)),
     ]
     for t_id, name, ops in tunnel_configs:
