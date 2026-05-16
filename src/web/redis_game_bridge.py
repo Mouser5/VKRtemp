@@ -163,9 +163,21 @@ class RedisGameBridge:
             result["game_id"] = game_id
             return result
         finally:
-            self.docker.stop_and_remove_container(c0["container_id"])
-            self.docker.stop_and_remove_container(c1["container_id"])
-            self.redis.delete_game(game_id)
+            import threading
+
+            def background_cleanup(c0_id, c1_id, g_id):
+                try:
+                    self.docker.stop_and_remove_container(c0_id)
+                    self.docker.stop_and_remove_container(c1_id)
+                    self.redis.delete_game(g_id)
+                except Exception as e:
+                    logger.error(f"Фоновая очистка не удалась: {e}")
+
+            cleanup_thread = threading.Thread(
+                target=background_cleanup,
+                args=(c0["container_id"], c1["container_id"], game_id)
+            )
+            cleanup_thread.start()
 
     def _error_result_two_containers(self, game_id: str, reason: str) -> Dict[str, Any]:
         return {
