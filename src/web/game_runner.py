@@ -199,7 +199,7 @@ def run_single_game(
                     game.state.current_player_id = 1 - curr_p
                     continue
 
-                success, msg, rev_gold, _ = game.step(action)
+                success, msg, rev_gold = game.step(action)
                 turn_count += 1
 
                 dsl_lines.append(action_to_dsl(action, curr_p))
@@ -306,7 +306,7 @@ def run_benchmark(
                             game.state.current_player_id = 1 - curr_p
                             continue
 
-                        success, msg, _, _ = game.step(action)
+                        success, msg, _ = game.step(action)
                         if not success:
                             total_errors += 1
                         total_turns += 1
@@ -558,7 +558,7 @@ def run_single_game_internal(
                     game.state.current_player_id = 1 - curr_p
                     continue
 
-                success, msg, rev_gold, _ = game.step(action)
+                success, msg, rev_gold = game.step(action)
                 turn_count += 1
 
                 if turn_count <= 5:

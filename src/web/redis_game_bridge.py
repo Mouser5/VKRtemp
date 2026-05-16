@@ -56,10 +56,11 @@ class RedisGameBridge:
 
         log_game_start(game_id, bot_name, opponent_name)
 
-        container_result = self.docker.start_game_container_redis(
-            bot_code=bot_code,
-            user_id=0,
+        self.redis.client.set(f"game:{game_id}:p{container_player_id}:code", bot_code)
+
+        container_result = self.docker.start_player_container_redis(
             game_id=game_id,
+            player_id=container_player_id,
         )
 
         if "error" in container_result:
@@ -77,7 +78,7 @@ class RedisGameBridge:
         container_id = container_result["container_id"]
         self._container_ids[container_player_id] = container_id
 
-        self.redis.wait_for_listener_ready(game_id, timeout=5.0)
+        self.redis.wait_for_listener_ready(game_id, timeout=5.0, player_id=container_player_id)
 
         try:
             result = self._run_game_loop(
@@ -102,14 +103,16 @@ class RedisGameBridge:
                 "logs": [],
             }
         finally:
-            try:
-                self.docker.stop_game_container(container_id)
-            except Exception:
-                logger.exception(f"Failed to stop container {container_id}")
-            try:
-                self.redis.delete_game(game_id)
-            except Exception:
-                logger.exception(f"Failed to delete Redis game {game_id}")
+            import threading
+            def cleanup_single(c_id, g_id):
+                try:
+                    self.docker.stop_and_remove_container(c_id)
+                    self.redis.delete_game(g_id)
+                except Exception as e:
+                    logger.error(f"Фоновая очистка не удалась: {e}")
+
+            cleanup_thread = threading.Thread(target=cleanup_single, args=(container_id, game_id))
+            cleanup_thread.start()
 
     def run_game_two_containers(
             self,
@@ -349,7 +352,7 @@ class RedisGameBridge:
             game.state.current_player_id = 1 - player_id
             return True
 
-        success, msg, rev_gold, _ = game.step(pydantic_action)
+        success, msg, rev_gold = game.step(pydantic_action)
         dsl_lines.append(action_to_dsl(pydantic_action, player_id))
         logs.append(
             GameLog(
@@ -459,7 +462,7 @@ class RedisGameBridge:
                 game.state.current_player_id = 1 - player_id
                 return True
 
-            success, msg, rev_gold, _ = game.step(action)
+            success, msg, rev_gold = game.step(action)
             dsl_lines.append(action_to_dsl(action, player_id))
             logs.append(
                 GameLog(

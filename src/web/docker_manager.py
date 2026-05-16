@@ -128,77 +128,77 @@ class DockerManager:
             log_container_error(name, str(e))
             return {"error": str(e)}
 
-    # def start_game_container(
-    #     self,
-    #     bot_code: str,
-    #     user_id: int,
-    #     game_id: str,
-    #     redis_channel: str,
-    # ) -> Dict[str, str]:
-    #     container_id = f"game-{game_id}-{uuid.uuid4().hex[:8]}"
-    #
-    #     result = self._start_container(
-    #         "gnomes-bot:latest",
-    #         container_id,
-    #         {
-    #             "GAME_API_URL": self.game_api_url,
-    #             "GAME_ID": game_id,
-    #             "REDIS_URL": self.redis_url,
-    #             "USER_CHANNEL": redis_channel,
-    #             "USER_ID": str(user_id),
-    #         },
-    #     )
-    #
-    #     if "error" in result:
-    #         return result
-    #
-    #     base_url = f"http://{container_id}:8001"
-    #
-    #     resp = requests.post(
-    #         f"{base_url}/init",
-    #         json={"code": bot_code, "player_id": 0, "game_id": game_id},
-    #         timeout=10,
-    #     )
-    #     if resp.status_code != 200:
-    #         self.stop_game_container(container_id)
-    #         log_container_error(container_id, f"Init failed: {resp.text}")
-    #         return {"error": f"Init failed: {resp.text}"}
-    #
-    #     log_container_start(container_id, base_url, bot_code)
-    #     return {
-    #         "container_id": container_id,
-    #         "url": base_url,
-    #         "game_id": game_id,
-    #     }
-    #
-    # def start_bot_container(self, bot_code: str, player_id: int = 0) -> Dict[str, str]:
-    #     container_id = f"bot-{uuid.uuid4().hex[:8]}"
-    #
-    #     result = self._start_container(
-    #         "gnomes-bot:latest",
-    #         container_id,
-    #         {
-    #             "GAME_API_URL": self.game_api_url,
-    #         },
-    #     )
-    #
-    #     if "error" in result:
-    #         return result
-    #
-    #     base_url = f"http://{container_id}:8001"
-    #
-    #     resp = requests.post(
-    #         f"{base_url}/init",
-    #         json={"code": bot_code, "player_id": player_id},
-    #         timeout=10,
-    #     )
-    #     if resp.status_code != 200:
-    #         self.stop_game_container(container_id)
-    #         log_container_error(container_id, f"Init failed: {resp.text}")
-    #         return {"error": f"Init failed: {resp.text}"}
-    #
-    #     log_container_start(container_id, base_url, bot_code)
-    #     return {"container_id": container_id, "url": base_url}
+    def start_game_container(
+        self,
+        bot_code: str,
+        user_id: int,
+        game_id: str,
+        redis_channel: str,
+    ) -> Dict[str, str]:
+        container_id = f"game-{game_id}-{uuid.uuid4().hex[:8]}"
+
+        result = self._start_container(
+            "gnomes-bot:latest",
+            container_id,
+            {
+                "GAME_API_URL": self.game_api_url,
+                "GAME_ID": game_id,
+                "REDIS_URL": self.redis_url,
+                "USER_CHANNEL": redis_channel,
+                "USER_ID": str(user_id),
+            },
+        )
+
+        if "error" in result:
+            return result
+
+        base_url = f"http://{container_id}:8001"
+
+        resp = requests.post(
+            f"{base_url}/init",
+            json={"code": bot_code, "player_id": 0, "game_id": game_id},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            self.stop_game_container(container_id)
+            log_container_error(container_id, f"Init failed: {resp.text}")
+            return {"error": f"Init failed: {resp.text}"}
+
+        log_container_start(container_id, base_url, bot_code)
+        return {
+            "container_id": container_id,
+            "url": base_url,
+            "game_id": game_id,
+        }
+
+    def start_bot_container(self, bot_code: str, player_id: int = 0) -> Dict[str, str]:
+        container_id = f"bot-{uuid.uuid4().hex[:8]}"
+
+        result = self._start_container(
+            "gnomes-bot:latest",
+            container_id,
+            {
+                "GAME_API_URL": self.game_api_url,
+            },
+        )
+
+        if "error" in result:
+            return result
+
+        base_url = f"http://{container_id}:8001"
+
+        resp = requests.post(
+            f"{base_url}/init",
+            json={"code": bot_code, "player_id": player_id},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            self.stop_game_container(container_id)
+            log_container_error(container_id, f"Init failed: {resp.text}")
+            return {"error": f"Init failed: {resp.text}"}
+
+        log_container_start(container_id, base_url, bot_code)
+        return {"container_id": container_id, "url": base_url}
 
     def start_game_container_redis(
         self,
@@ -313,38 +313,38 @@ class DockerManager:
             log_container_error(container_id, "Ошибка при stop_and_remove")
             return False
 
-    # def get_container_status(self, container_id: str) -> Optional[str]:
-    #     try:
-    #         container = self.client.containers.get(container_id)
-    #         return container.status
-    #     except Exception:
-    #         return None
+    def get_container_status(self, container_id: str) -> Optional[str]:
+        try:
+            container = self.client.containers.get(container_id)
+            return container.status
+        except Exception:
+            return None
 
-    # def cleanup_all_bots(self) -> int:
-    #     count = 0
-    #     try:
-    #         for container in self.client.containers.list(filters={"name": "bot-"}):
-    #             container.stop()
-    #             container.remove()
-    #             log_container_stop(container.name, "cleanup ботов")
-    #             count += 1
-    #     except Exception:
-    #         pass
-    #     logger.info(f"🧹 Очищено контейнеров ботов: {count}")
-    #     return count
-    #
-    # def cleanup_all_games(self) -> int:
-    #     count = 0
-    #     try:
-    #         for container in self.client.containers.list(filters={"name": "game-"}):
-    #             container.stop()
-    #             container.remove()
-    #             log_container_stop(container.name, "cleanup игр")
-    #             count += 1
-    #     except Exception:
-    #         pass
-    #     logger.info(f"🧹 Очищено контейнеров игр: {count}")
-    #     return count
+    def cleanup_all_bots(self) -> int:
+        count = 0
+        try:
+            for container in self.client.containers.list(filters={"name": "bot-"}):
+                container.stop()
+                container.remove()
+                log_container_stop(container.name, "cleanup ботов")
+                count += 1
+        except Exception:
+            pass
+        logger.info(f"🧹 Очищено контейнеров ботов: {count}")
+        return count
+
+    def cleanup_all_games(self) -> int:
+        count = 0
+        try:
+            for container in self.client.containers.list(filters={"name": "game-"}):
+                container.stop()
+                container.remove()
+                log_container_stop(container.name, "cleanup игр")
+                count += 1
+        except Exception:
+            pass
+        logger.info(f"🧹 Очищено контейнеров игр: {count}")
+        return count
 
 
 docker_manager = DockerManager()
