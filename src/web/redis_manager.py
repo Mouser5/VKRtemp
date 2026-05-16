@@ -50,6 +50,11 @@ class GameRedisManager:
     def _events_channel(self, game_id: str) -> str:
         return f"game:{game_id}:events"
 
+    def _listener_ready_key(self, game_id: str, player_id: Optional[int] = None) -> str:
+        if player_id is None:
+            return f"game:{game_id}:listener_ready"
+        return f"game:{game_id}:player:{player_id}:listener_ready"
+
     def create_game(self, game_state: Dict[str, Any]) -> str:
         game_id = str(uuid.uuid4())[:8]
         key = self._state_key(game_id)
@@ -84,12 +89,16 @@ class GameRedisManager:
             return False
 
     def delete_game(self, game_id: str) -> bool:
-        key = self._state_key(game_id)
         channel = self._events_channel(game_id)
         try:
-            self.client.delete(key)
+            pattern = f"game:{game_id}:*"
+            keys = list(self.client.scan_iter(match=pattern, count=100))
+            if keys:
+                self.client.delete(*keys)
             self.client.publish(channel, pickle.dumps({"event": "game_ended"}))
-            log_redis_operation("delete_game", game_id, "published game_ended")
+            log_redis_operation(
+                "delete_game", game_id, f"published game_ended deleted={len(keys)}"
+            )
             return True
         except Exception as e:
             log_redis_error("delete_game", str(e))
@@ -169,10 +178,18 @@ class GameRedisManager:
     def load_state(self, game_id: str) -> Optional[Dict[str, Any]]:
         return self.get_game(game_id)
 
-    def signal_turn(self, game_id: str, player_id: int, turn: int) -> bool:
+    def signal_turn(
+        self,
+        game_id: str,
+        player_id: int,
+        turn: int,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         channel = self._events_channel(game_id)
         try:
             pipe = self.client.pipeline()
+            if state is not None:
+                pipe.set(self._state_key(game_id), pickle.dumps(state))
             pipe.set(self._current_player_key(game_id), player_id)
             pipe.set(self._turn_key(game_id), turn)
             pipe.publish(
@@ -182,6 +199,7 @@ class GameRedisManager:
                         "event": "your_turn",
                         "player_id": player_id,
                         "turn": turn,
+                        "has_state": state is not None,
                     }
                 ),
             )
@@ -195,8 +213,15 @@ class GameRedisManager:
             return False
 
     def wait_for_action(
-        self, game_id: str, player_id: int, timeout: float = 30.0
+        self,
+        game_id: str,
+        player_id: int,
+        timeout: float = 30.0,
+        turn: Optional[int] = None,
+        timeout_sec: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
+        if timeout_sec is not None:
+            timeout = timeout_sec
         key = self._action_key(game_id, player_id)
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -208,14 +233,24 @@ class GameRedisManager:
                     log_redis_operation(
                         "wait_for_action",
                         game_id,
-                        f"player={player_id} action_received",
+                        (
+                            f"player={player_id} turn={turn} action_received"
+                            if turn is not None
+                            else f"player={player_id} action_received"
+                        ),
                     )
                     return action
             except Exception as e:
                 log_redis_error("wait_for_action", str(e))
             time.sleep(0.1)
         log_redis_operation(
-            "wait_for_action", game_id, f"player={player_id} timeout={timeout}s"
+            "wait_for_action",
+            game_id,
+            (
+                f"player={player_id} turn={turn} timeout={timeout}s"
+                if turn is not None
+                else f"player={player_id} timeout={timeout}s"
+            ),
         )
         return None
 
@@ -264,19 +299,52 @@ class GameRedisManager:
             log_redis_error("clear_turn_state", str(e))
             return False
 
-    def wait_for_listener_ready(self, game_id: str, timeout: float = 10.0) -> bool:
-        key = f"game:{game_id}:listener_ready"
+    def wait_for_listener_ready(
+        self, game_id: str, timeout: float = 10.0, player_id: Optional[int] = None
+    ) -> bool:
+        key = self._listener_ready_key(game_id, player_id)
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
                 if self.client.exists(key):
-                    log_redis_operation("wait_for_listener_ready", game_id, "ready")
+                    details = (
+                        f"player={player_id} ready"
+                        if player_id is not None
+                        else "ready"
+                    )
+                    log_redis_operation("wait_for_listener_ready", game_id, details)
                     return True
             except Exception as e:
                 log_redis_error("wait_for_listener_ready", str(e))
             time.sleep(0.1)
-        log_redis_operation("wait_for_listener_ready", game_id, "timeout")
+        details = (
+            f"player={player_id} timeout" if player_id is not None else "timeout"
+        )
+        log_redis_operation("wait_for_listener_ready", game_id, details)
         return False
+
+    def publish_game_event(
+        self,
+        game_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        channel = self._events_channel(game_id)
+        message = {
+            "event": event_type,
+            "payload": payload or {},
+        }
+        try:
+            count = self.client.publish(channel, pickle.dumps(message))
+            log_redis_operation(
+                "publish_game_event",
+                game_id,
+                f"event={event_type} subscribers={count}",
+            )
+            return count
+        except Exception as e:
+            log_redis_error("publish_game_event", str(e))
+            return 0
 
     def wait_for_turn_signal(
         self, game_id: str, player_id: int, timeout: float = 30.0

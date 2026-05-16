@@ -69,7 +69,6 @@ class RedisBotListener:
 
         game = GameProxy.from_state(state_dict)
         action = self.agent.choose_action(game)
-
         if action is None:
             self._store_action({"type": "None", "reason": "no_legal_actions"})
         else:
@@ -92,6 +91,7 @@ class RedisBotListener:
         pubsub = self.client.pubsub()
         pubsub.subscribe(channel)
         self.client.set(f"game:{self.game_id}:listener_ready", "1")
+        self.client.set(f"game:{self.game_id}:player:{self.player_id}:listener_ready", "1")
 
         print(f"[RedisBot] Listening on {channel}")
 
@@ -125,7 +125,9 @@ class RedisBotListener:
                 elif event_type == "game_ended":
                     print("[RedisBot] Game ended")
                     break
-
+        # [RedisBot] Your turn (player=0, turn=0)
+        #
+        # [RedisBot] Your turn (player=0, turn=1)
         except KeyboardInterrupt:
             pass
         finally:

@@ -403,214 +403,112 @@ def create_game_for_tournament(
     return game
 
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from web.database import SessionLocal
+from web.redis_game_bridge import RedisGameBridge
+
+
 def run_tournament(
     bots: List[Tuple[str, type, str]],
     db_session,
     user_id: int,
     tournament_name: str,
 ) -> TournamentResult:
-    from web.models import (
-        Tournament,
-        TournamentGame,
-        TournamentResult as TournamentResultModel,
-        TournamentStatus,
-        User,
-    )
-    from web.logger import log_tournament_end, log_tournament_game
+    from web.models import Tournament, TournamentGame, TournamentResult as TRModel, TournamentStatus, User
+    from web.logger import log_tournament_end
 
     start_time = time.perf_counter()
-
-    tournament = Tournament(
-        user_id=user_id,
-        name=tournament_name,
-        status=TournamentStatus.running,
-    )
+    tournament = Tournament(user_id=user_id, name=tournament_name, status=TournamentStatus.running)
     db_session.add(tournament)
     db_session.commit()
     tournament_id = tournament.id
 
-    results: Dict[str, Dict[str, int]] = {}
-    for _, _, bot_name in bots:
-        results[bot_name] = {
-            "wins": 0,
-            "losses": 0,
-            "draws": 0,
-            "total_score": 0,
-            "games": 0,
-        }
+    results = {b_name: {"wins": 0, "losses": 0, "draws": 0, "total_score": 0, "games": 0} for _, _, b_name in bots}
+
+    match_tasks = []
+    game_order = 1
+    for i, (bot1_code, _, bot1_name) in enumerate(bots):
+        for j, (bot2_code, _, bot2_name) in enumerate(bots[i + 1:], start=i + 1):
+            match_tasks.append({
+                "order": game_order,
+                "p0_name": bot1_name, "p0_code": bot1_code,
+                "p1_name": bot2_name, "p1_code": bot2_code,
+            })
+            game_order += 1
 
     total_games = 0
     total_turns = 0
 
-    print(f"\n[TOURNAMENT] Starting tournament with {len(bots)} bots")
-
-    from web.redis_game_bridge import RedisGameBridge
-
+    print(f"\n[TOURNAMENT] Starting {len(match_tasks)} matches with 10 parallel workers")
     bridge = RedisGameBridge()
 
-    for i, (bot1_code, bot1_class, bot1_name) in enumerate(bots):
-        for j, (bot2_code, bot2_class, bot2_name) in enumerate(bots):
-            if i == j:
-                continue
-
-            print(f"\n[TOURNAMENT] Match {i}x{j}: {bot1_name} vs {bot2_name}")
-
-            temp_game = Game()
-            hand1_orig = temp_game.state.players[0].hand.copy()
-            hand2_orig = temp_game.state.players[1].hand.copy()
-            hand1_templates = list(
-                temp_game.state.players[0].card_id_to_template.values()
-            )
-            hand2_templates = list(
-                temp_game.state.players[1].card_id_to_template.values()
-            )
-            print(f"[TOURNAMENT] Original hands - P0: {hand1_orig}, P1: {hand2_orig}")
-
-            game1 = create_game_for_tournament(
-                bot1_class,
-                bot2_class,
-                hand1_orig,
-                hand2_orig,
-                hand1_templates,
-                hand2_templates,
-            )
-            result1 = bridge.run_with_container(
-                container_player_id=0,
-                bot_code=bot1_code,
-                opponent_agent=bot2_class(1),
-                opponent_name=bot2_name,
-                bot_name=bot1_name,
-                game=game1,
+    def worker_task(match_info):
+        """Задача для ThreadPoolExecutor. Внутри создаем свою сессию БД."""
+        db = SessionLocal()
+        try:
+            # Запускаем игру в двух изолированных контейнерах через Redis мост
+            res = bridge.run_game_two_containers(
+                bot0_name=match_info["p0_name"],
+                bot1_name=match_info["p1_name"],
+                bot0_code=match_info["p0_code"],
+                bot1_code=match_info["p1_code"]
             )
 
-            if result1.get("error"):
-                print(f"[TOURNAMENT] Game 1 container error: {result1['error']}")
-                result1["winner"] = None
-                result1["scores"] = {0: 0, 1: 0}
-                result1["turns"] = 0
-
-            print(
-                f"[TOURNAMENT] Game 1 result: winner={result1['winner']}, scores={result1['scores']}, turns={result1['turns']}"
-            )
-            total_turns += result1["turns"]
-
-            tg1 = TournamentGame(
+            # Логируем результат игры в БД
+            scores = res.get("scores", {0: 0, 1: 0})
+            tg = TournamentGame(
                 tournament_id=tournament_id,
-                bot1_id=None,
-                bot2_id=None,
-                bot1_name=bot1_name,
-                bot2_name=bot2_name,
-                game_order=total_games + 1,
-                bot1_score=result1["scores"][0],
-                bot2_score=result1["scores"][1],
-                winner=result1["winner"],
-                turns=result1["turns"],
+                bot1_name=match_info["p0_name"],
+                bot2_name=match_info["p1_name"],
+                game_order=match_info["order"],
+                bot1_score=scores.get(0, 0),
+                bot2_score=scores.get(1, 0),
+                winner=res.get("winner"),
+                turns=res.get("turns", 0),
             )
-            db_session.add(tg1)
-            db_session.commit()
+            db.add(tg)
+            db.commit()
 
-            log_tournament_game(
-                tournament_id=tournament_id,
-                game_num=total_games + 1,
-                bot1_name=bot1_name,
-                bot2_name=bot2_name,
-                bot1_score=result1["scores"][0],
-                bot2_score=result1["scores"][1],
-                winner=result1["winner"],
-                turns=result1["turns"],
-            )
+            res["p0_name"] = match_info["p0_name"]
+            res["p1_name"] = match_info["p1_name"]
+            return res
+        finally:
+            db.close()
 
-            if result1["winner"] == 0:
-                results[bot1_name]["wins"] += 1
-                results[bot2_name]["losses"] += 1
-            elif result1["winner"] == 1:
-                results[bot1_name]["losses"] += 1
-                results[bot2_name]["wins"] += 1
-            else:
-                results[bot1_name]["draws"] += 1
-                results[bot2_name]["draws"] += 1
+    # Запускаем пул потоков (МАКСИМУМ 10 параллельно)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker_task, match) for match in match_tasks]
 
-            results[bot1_name]["total_score"] += result1["scores"][0]
-            results[bot2_name]["total_score"] += result1["scores"][1]
-            results[bot1_name]["games"] += 1
-            results[bot2_name]["games"] += 1
-
+        for future in as_completed(futures):
+            res = future.result()
             total_games += 1
+            total_turns += res.get("turns", 0)
 
-            game2 = create_game_for_tournament(
-                bot1_class,
-                bot2_class,
-                hand2_orig,
-                hand1_orig,
-                hand2_templates,
-                hand1_templates,
-            )
-            result2 = bridge.run_with_container(
-                container_player_id=0,
-                bot_code=bot1_code,
-                opponent_agent=bot2_class(1),
-                opponent_name=bot2_name,
-                bot_name=bot1_name,
-                game=game2,
-            )
+            b1 = res["p0_name"]
+            b2 = res["p1_name"]
+            winner = res.get("winner")
+            scores = res.get("scores", {0: 0, 1: 0})
 
-            if result2.get("error"):
-                print(f"[TOURNAMENT] Game 2 container error: {result2['error']}")
-                result2["winner"] = None
-                result2["scores"] = {0: 0, 1: 0}
-                result2["turns"] = 0
-
-            total_turns += result2["turns"]
-
-            tg2 = TournamentGame(
-                tournament_id=tournament_id,
-                bot1_id=None,
-                bot2_id=None,
-                bot1_name=bot2_name,
-                bot2_name=bot1_name,
-                game_order=total_games + 1,
-                bot1_score=result2["scores"][0],
-                bot2_score=result2["scores"][1],
-                winner=result2["winner"],
-                turns=result2["turns"],
-            )
-            db_session.add(tg2)
-            db_session.commit()
-
-            log_tournament_game(
-                tournament_id=tournament_id,
-                game_num=total_games + 1,
-                bot1_name=bot2_name,
-                bot2_name=bot1_name,
-                bot1_score=result2["scores"][0],
-                bot2_score=result2["scores"][1],
-                winner=result2["winner"],
-                turns=result2["turns"],
-            )
-
-            if result2["winner"] == 0:
-                results[bot1_name]["wins"] += 1
-                results[bot2_name]["losses"] += 1
-            elif result2["winner"] == 1:
-                results[bot1_name]["losses"] += 1
-                results[bot2_name]["wins"] += 1
+            # Обновляем локальный словарь результатов
+            if winner == 0:
+                results[b1]["wins"] += 1
+                results[b2]["losses"] += 1
+            elif winner == 1:
+                results[b1]["losses"] += 1
+                results[b2]["wins"] += 1
             else:
-                results[bot1_name]["draws"] += 1
-                results[bot2_name]["draws"] += 1
+                results[b1]["draws"] += 1
+                results[b2]["draws"] += 1
 
-            results[bot1_name]["total_score"] += result2["scores"][0]
-            results[bot2_name]["total_score"] += result2["scores"][1]
-            results[bot1_name]["games"] += 1
-            results[bot2_name]["games"] += 1
+            results[b1]["total_score"] += scores.get(0, 0)
+            results[b2]["total_score"] += scores.get(1, 0)
+            results[b1]["games"] += 1
+            results[b2]["games"] += 1
 
-            total_games += 1
-
-            db_session.commit()
-
+    # Сохраняем финальные результаты турнира в БД
     for bot_name, stats in results.items():
-        tr = TournamentResultModel(
+        tr = TRModel(
             tournament_id=tournament_id,
-            bot_id=None,
             bot_name=bot_name,
             wins=stats["wins"],
             losses=stats["losses"],
@@ -620,37 +518,13 @@ def run_tournament(
         )
         db_session.add(tr)
 
-    sorted_results = sorted(results.items(), key=lambda x: x[1]["wins"], reverse=True)
-    if sorted_results:
-        top_bot_stats = sorted_results[0][1]
-        if top_bot_stats["games"] > 0:
-            user = db_session.query(User).filter(User.id == user_id).first()
-            if user:
-                user.winrate = int(top_bot_stats["wins"] / top_bot_stats["games"] * 100)
-                db_session.commit()
-
     tournament.status = TournamentStatus.completed
     db_session.commit()
 
     elapsed = time.perf_counter() - start_time
+    log_tournament_end(tournament_id, tournament_name, total_games, total_turns, results, elapsed)
 
-    log_tournament_end(
-        tournament_id=tournament_id,
-        tournament_name=tournament_name,
-        total_games=total_games,
-        total_turns=total_turns,
-        results=results,
-        elapsed_time=elapsed,
-    )
-
-    return TournamentResult(
-        tournament_id=tournament_id,
-        total_games=total_games,
-        total_turns=total_turns,
-        results=results,
-        elapsed_time=elapsed,
-    )
-
+    return TournamentResult(tournament_id, total_games, total_turns, results, elapsed)
 
 def run_single_game_internal(
     game: Game,

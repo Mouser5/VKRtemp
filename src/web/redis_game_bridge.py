@@ -22,15 +22,22 @@ from web.logger import (
 
 class RedisGameBridge:
     def __init__(
-        self,
-        redis_mgr: GameRedisManager = None,
-        docker_mgr=None,
+            self,
+            docker_manager=None,
+            redis_client: GameRedisManager = None,
+            game_engine_factory=None,
+            redis_mgr: GameRedisManager = None,
+            docker_mgr=None,
     ):
-        from web.docker_manager import docker_manager
+        from web.docker_manager import docker_manager as default_docker_manager
+        from game import Game
 
-        self.redis = redis_mgr or game_redis
-        self.docker = docker_mgr or docker_manager
-        self._current_container_id: Optional[str] = None
+        self.redis = redis_client or redis_mgr or game_redis
+        self.docker = docker_mgr or docker_manager or default_docker_manager
+        self.game_engine_factory = game_engine_factory or (lambda _config: Game())
+
+        # Теперь храним словарь ID контейнеров {player_id: container_id}
+        self._container_ids: Dict[int, str] = {}
 
     def run_with_container(
         self,
@@ -68,7 +75,7 @@ class RedisGameBridge:
             }
 
         container_id = container_result["container_id"]
-        self._current_container_id = container_id
+        self._container_ids[container_player_id] = container_id
 
         self.redis.wait_for_listener_ready(game_id, timeout=5.0)
 
@@ -76,11 +83,11 @@ class RedisGameBridge:
             result = self._run_game_loop(
                 game=game,
                 game_id=game_id,
-                container_player_id=container_player_id,
+                container_player_ids=[container_player_id],
                 opponent_class=opponent_class,
                 opponent_agent=opponent_agent,
                 timeout=timeout,
-                bot_code=bot_code,
+                bot_codes={container_player_id: bot_code},
                 user_id=0,
             )
             return result
@@ -104,22 +111,105 @@ class RedisGameBridge:
             except Exception:
                 logger.exception(f"Failed to delete Redis game {game_id}")
 
-    def _run_game_loop(
-        self,
-        game: Game,
-        game_id: str,
-        container_player_id: int,
-        opponent_class: type = None,
-        opponent_agent: Any = None,
-        timeout: float = 30.0,
-        bot_code: str = "",
-        user_id: int = 0,
+    def run_game_two_containers(
+            self,
+            bot0_code: str,
+            bot1_code: str,
+            bot0_name: str,
+            bot1_name: str,
+            game_config: Optional[Dict[str, Any]] = None,
+            action_timeout_sec: float = 2.0,
     ) -> Dict[str, Any]:
-        opponent = (
-            opponent_agent
-            if opponent_agent is not None
-            else opponent_class(1 - container_player_id)
-        )
+        """
+        Запуск матча между двумя изолированными ботами с использованием единого цикла.
+        """
+        game_cfg = game_config or {}
+        game_id = str(uuid.uuid4())[:8]
+        game = self.game_engine_factory(game_cfg)
+
+        self.redis.client.set(f"game:{game_id}:p0:code", bot0_code)
+        self.redis.client.set(f"game:{game_id}:p1:code", bot1_code)
+
+        c0 = self.docker.start_player_container_redis(game_id=game_id, player_id=0)
+        if "error" in c0:
+            return self._error_result_two_containers(game_id, f"container_start_error_p0: {c0['error']}")
+
+        c1 = self.docker.start_player_container_redis(game_id=game_id, player_id=1)
+        if "error" in c1:
+            self.docker.stop_and_remove_container(c0["container_id"])
+            return self._error_result_two_containers(game_id, f"container_start_error_p1: {c1['error']}")
+
+        self._container_ids[0] = c0["container_id"]
+        self._container_ids[1] = c1["container_id"]
+
+        ready0 = self.redis.wait_for_listener_ready(game_id, timeout=5.0, player_id=0)
+        ready1 = self.redis.wait_for_listener_ready(game_id, timeout=5.0, player_id=1)
+
+        if not (ready0 and ready1):
+            self.docker.stop_and_remove_container(c0["container_id"])
+            self.docker.stop_and_remove_container(c1["container_id"])
+            self.redis.delete_game(game_id)
+            return self._error_result_two_containers(game_id, "listener_ready_timeout")
+        log_game_start(game_id, bot0_name, bot1_name)
+        try:
+            result = self._run_game_loop(
+                game=game,
+                game_id=game_id,
+                container_player_ids=[0, 1],
+                timeout=action_timeout_sec,
+                bot_codes={0: bot0_code, 1: bot1_code},
+                user_id=0,
+            )
+            result["game_id"] = game_id
+            return result
+        finally:
+            self.docker.stop_and_remove_container(c0["container_id"])
+            self.docker.stop_and_remove_container(c1["container_id"])
+            self.redis.delete_game(game_id)
+
+    def _error_result_two_containers(self, game_id: str, reason: str) -> Dict[str, Any]:
+        return {
+            "game_id": game_id,
+            "winner": None,
+            "reason": reason,
+            "turns": 0,
+            "scores": {0: 0, 1: 0},
+            "dsl_log": "",
+            "logs": [],
+        }
+
+    @staticmethod
+    def _winner_from_scores(scores: Dict[int, int]) -> Optional[int]:
+        p0 = scores.get(0, 0)
+        p1 = scores.get(1, 0)
+        if p0 > p1:
+            return 0
+        if p1 > p0:
+            return 1
+        return None
+
+    def _run_game_loop(
+            self,
+            game: Game,
+            game_id: str,
+            container_player_ids: List[int],
+            opponent_class: type = None,
+            opponent_agent: Any = None,
+            timeout: float = 30.0,
+            bot_codes: Dict[int, str] = None,
+            user_id: int = 0,
+    ) -> Dict[str, Any]:
+        bot_codes = bot_codes or {}
+
+        # Определяем локального оппонента, если хотя бы один игрок НЕ в контейнере
+        local_player_id = next((p for p in [0, 1] if p not in container_player_ids), None)
+        opponent = None
+        if local_player_id is not None:
+            if opponent_agent is not None:
+                opponent = opponent_agent
+            elif opponent_class is not None:
+                opponent = opponent_class(local_player_id)
+
         turn_count = 0
         errors: List[str] = []
         dsl_lines: List[str] = []
@@ -130,7 +220,8 @@ class RedisGameBridge:
                 curr_p = game.state.current_player_id
                 turn_count += 1
 
-                if curr_p == container_player_id:
+                if curr_p in container_player_ids:
+                    code = bot_codes.get(curr_p, "")
                     success = self._play_container_turn_with_retry(
                         game,
                         game_id,
@@ -139,8 +230,9 @@ class RedisGameBridge:
                         timeout,
                         dsl_lines,
                         logs,
-                        bot_code,
+                        code,
                         user_id,
+                        is_two_containers=(len(container_player_ids) == 2)
                     )
                     if not success:
                         errors.append(f"Container turn {turn_count} failed")
@@ -154,12 +246,9 @@ class RedisGameBridge:
             game.check_round_end()
 
         total_scores = game.state.total_scores
-        if total_scores[0] > total_scores[1]:
-            winner = 0
-        elif total_scores[1] > total_scores[0]:
-            winner = 1
-        else:
-            winner = None
+        print(f"total_score {total_scores}")
+        winner = self._winner_from_scores(total_scores)
+        print(f"winner {winner}")
 
         log_game_end(game_id, str(winner), total_scores, turn_count)
 
@@ -280,6 +369,7 @@ class RedisGameBridge:
         bot_code: str,
         user_id: int,
         max_retries: int = 3,
+        is_two_containers: bool = False
     ) -> bool:
         for attempt in range(max_retries):
             dsl_len = len(dsl_lines)
@@ -303,19 +393,31 @@ class RedisGameBridge:
                 f"Container turn {turn} attempt {attempt + 1}/{max_retries}, restarting..."
             )
 
-            self.docker.stop_game_container(self._current_container_id)
-            result = self.docker.start_game_container_redis(
-                bot_code=bot_code,
-                user_id=user_id,
-                game_id=game_id,
-            )
+            cid = self._container_ids.get(player_id)
+            if cid:
+                if is_two_containers:
+                    self.docker.stop_and_remove_container(cid)
+                else:
+                    self.docker.stop_game_container(cid)
+
+            # Логика перезапуска зависит от режима (турнир или одиночная игра)
+            if is_two_containers:
+                self.redis.client.set(f"game:{game_id}:p{player_id}:code", bot_code)
+                result = self.docker.start_player_container_redis(game_id=game_id, player_id=player_id)
+                ready_key_suffix = f"player:{player_id}:listener_ready"
+                player_id_arg = player_id
+            else:
+                result = self.docker.start_game_container_redis(bot_code=bot_code, user_id=user_id, game_id=game_id)
+                ready_key_suffix = "listener_ready"
+                player_id_arg = None
+
             if "error" in result:
                 logger.error(f"Container restart failed: {result['error']}")
                 continue
 
-            self._current_container_id = result["container_id"]
-            self.redis.client.delete(f"game:{game_id}:listener_ready")
-            self.redis.wait_for_listener_ready(game_id, timeout=5.0)
+            self._container_ids[player_id] = result["container_id"]
+            self.redis.client.delete(f"game:{game_id}:{ready_key_suffix}")
+            self.redis.wait_for_listener_ready(game_id, timeout=5.0, player_id=player_id_arg)
 
         return False
 

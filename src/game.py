@@ -660,8 +660,8 @@ class Game:
 
         if self.state.round_number == 2:
             self.state.first_player_in_round = 1 - self.state.first_player_in_round
-        elif self.state.round_number == 3:
-            self.state.first_player_in_round = 1 - self.state.first_player_in_round
+        # elif self.state.round_number == 3:
+        #     self.state.first_player_in_round = 1 - self.state.first_player_in_round
 
         self.state.current_player_id = self.state.first_player_in_round
         self.state.turn_number = 1
