@@ -144,7 +144,7 @@ def run_bot_match(bot1_name: str, bot2_name: str, verbose: bool = True) -> Dict:
                     game.state.current_player_id = 1 - curr_p
                     continue
 
-                success, msg, rev_gold = game.step(action)
+                success, msg, rev_gold, _ = game.step(action)
                 turn_count += 1
 
                 dsl_lines.append(action_to_dsl(action, curr_p))
@@ -254,7 +254,7 @@ def run_benchmark(bot1_name: str, bot2_name: str, num_games: int) -> Dict:
                             game.state.current_player_id = 1 - curr_p
                             continue
 
-                        success, msg, _ = game.step(action)
+                        success, msg, _, _ = game.step(action)
                         # print(msg)
                         if not success:
                             total_errors += 1
@@ -372,7 +372,7 @@ def interactive_loop(game: Game, view: ConsoleView):
                 else:
                     continue
 
-                success, msg, rev_gold = game.step(action)
+                success, msg, rev_gold, _ = game.step(action)
                 if success:
                     view.print_message(msg)
                     if rev_gold:
@@ -390,7 +390,7 @@ def interactive_loop(game: Game, view: ConsoleView):
                 templates = [game.state.players[p_id].hand[i] for i in indices]
 
                 action = ActionDiscard(templates=templates)
-                success, msg, _ = game.step(action)
+                success, msg, _, _ = game.step(action)
                 if not success:
                     view.print_message(msg, is_error=True)
             except Exception as e:
@@ -414,7 +414,7 @@ def interactive_loop(game: Game, view: ConsoleView):
                     action = ActionDiscard(
                         templates=templates, repair_equipment=eq_map[eq_choice]
                     )
-                    success, msg, _ = game.step(action)
+                    success, msg, _, _ = game.step(action)
                     if success:
                         view.print_message(msg)
                     else:

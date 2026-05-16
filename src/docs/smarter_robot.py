@@ -9,7 +9,6 @@
 """
 
 import random
-from typing import Optional
 
 from actions import ActionBuild, ActionPlayPlayerUtility
 

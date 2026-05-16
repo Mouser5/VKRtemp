@@ -6,7 +6,6 @@
 """
 
 import random
-from typing import Optional
 
 # Примечание: эти импорты работают внутри веб-интерфейса
 # При локальном тестировании используйте: from actions import AgentAction

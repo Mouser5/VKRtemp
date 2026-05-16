@@ -352,7 +352,7 @@ class RedisGameBridge:
             game.state.current_player_id = 1 - player_id
             return True
 
-        success, msg, rev_gold = game.step(pydantic_action)
+        success, msg, rev_gold, _ = game.step(pydantic_action)
         dsl_lines.append(action_to_dsl(pydantic_action, player_id))
         logs.append(
             GameLog(
@@ -462,7 +462,7 @@ class RedisGameBridge:
                 game.state.current_player_id = 1 - player_id
                 return True
 
-            success, msg, rev_gold = game.step(action)
+            success, msg, rev_gold, _ = game.step(action)
             dsl_lines.append(action_to_dsl(action, player_id))
             logs.append(
                 GameLog(

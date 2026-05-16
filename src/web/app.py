@@ -6,12 +6,12 @@ src_path = Path(__file__).parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-import streamlit as st
-from sqlalchemy.orm import Session
-from web.database import SessionLocal, init_db
-from web.schemas import UserCreate, UserLogin
-from web.auth import register_user, authenticate_user, create_access_token
-from web.bot_crud import (
+import streamlit as st  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+from web.database import SessionLocal, init_db  # noqa: E402
+from web.schemas import UserCreate, UserLogin  # noqa: E402
+from web.auth import register_user, authenticate_user, create_access_token  # noqa: E402
+from web.bot_crud import (  # noqa: E402
     create_bot,
     get_user_bots,
     get_bot_by_id,
@@ -29,15 +29,17 @@ from web.bot_crud import (
     get_all_bots_with_users,
     delete_bot_by_admin,
 )
-from web.agent_validator import AgentValidator
-from web.game_runner import (
+from web.agent_validator import AgentValidator  # noqa: E402
+from web.game_runner import (  # noqa: E402
     save_game_log_to_db,
     GameLog,
     BUILTIN_AGENTS,
     SingleGameResult,
     BenchmarkResult,
     run_tournament,
+    run_hyperparam_benchmark,
 )
+from mc_config import GameConfig, RulesConfig  # noqa: E402
 
 st.set_page_config(
     page_title="Гномы-вредители: Дуэль",
@@ -249,6 +251,7 @@ def show_dashboard(db: Session):
                 "🤖 Все боты",
                 "📊 История",
                 "⚙️ Администрирование",
+                "🔧 Гиперпараметры",
                 "❓ Правила",
             ]
         )
@@ -272,6 +275,9 @@ def show_dashboard(db: Session):
             show_admin_panel(db)
 
         with tabs[6]:
+            show_hyperparam_tuning_tab(db, user_id)
+
+        with tabs[7]:
             show_requirements()
     else:
         tabs = st.tabs(["🎮 Игра", "🤖 Мои боты", "📊 История", "❓ Правила"])
@@ -570,7 +576,10 @@ def show_tournament_tab(db: Session, user_id: int):
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Всего игр", len(results) * 2 if results else 0)
+                total_games = (
+                    sum(r.games_played for r in results) // 2 if results else 0
+                )
+                st.metric("Всего игр", total_games)
             with col2:
                 st.metric("Статус", tournament.status.value)
             with col3:
@@ -979,6 +988,211 @@ def show_benchmark_result(result: BenchmarkResult):
 
     if result.total_errors > 0:
         st.warning(f"⚠️ Ошибок: {result.total_errors}")
+
+
+def show_hyperparam_tuning_tab(db: Session, user_id: int):
+    st.markdown("### 🔧 Гиперпараметры")
+
+    st.markdown(
+        "Тестирование влияния гиперпараметров на баланс игры. "
+        "Система считается сбалансированной, если у ботов с одинаковой логикой "
+        "винрейт ≈ 50%. Чем сложнее логика бота, тем выше его винрейт."
+    )
+
+    if st.session_state.pop("hp_reset_trigger", False):
+        for k, v in {
+            "hp_h1": 5,
+            "hp_h2": 5,
+            "hp_cpt": 1,
+            "hp_rounds": 3,
+            "hp_guar": False,
+            "hp_extra": False,
+            "hp_rest": False,
+            "hp_mull": False,
+            "hp_gold": 0,
+            "hp_hand": 0,
+            "hp_ngames": 100,
+        }.items():
+            st.session_state[k] = v
+
+    bot_names = list(BUILTIN_AGENTS.keys())
+
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        agent1_choice = st.selectbox("Первый бот", bot_names, index=0, key="hp_agent1")
+    with col_b2:
+        agent2_choice = st.selectbox(
+            "Второй бот",
+            bot_names,
+            index=2 if len(bot_names) > 2 else 1,
+            key="hp_agent2",
+        )
+
+    st.markdown("---")
+
+    with st.expander("⚙️ Параметры игры", expanded=True):
+        col_r1, col_r2, col_r3 = st.columns(3)
+
+        with col_r1:
+            hand_size_first = st.slider("Рука первого игрока", 2, 10, 5, key="hp_h1")
+            hand_size_second = st.slider("Рука второго игрока", 2, 10, 5, key="hp_h2")
+            cards_drawn_per_turn = st.slider("Карт за ход", 1, 5, 1, key="hp_cpt")
+            rounds = st.slider("Раундов", 1, 5, 3, key="hp_rounds")
+
+        with col_r2:
+            guarantee_card_types = st.checkbox(
+                "Гарантия типов карт (тоннель/починка/поломка)",
+                value=False,
+                key="hp_guar",
+            )
+            second_extra_draw_t1 = st.checkbox(
+                "Дополнительная карта второму игроку на T1", value=False, key="hp_extra"
+            )
+            first_turn_pass_restriction = st.checkbox(
+                "Запрет поломки/починки первому игроку на T1",
+                value=False,
+                key="hp_rest",
+            )
+            mulligan_enabled = st.checkbox(
+                "Пересдача руки (mulligan)", value=False, key="hp_mull"
+            )
+
+        with col_r3:
+            second_player_bonus_gold = st.slider(
+                "Бонусное золото второму игроку", 0, 10, 0, key="hp_gold"
+            )
+            hand_limit = st.slider(
+                "Лимит карт в руке (0 = без лимита)", 0, 10, 0, key="hp_hand"
+            )
+
+        st.markdown("---")
+
+        if st.button(
+            "🔄 Сбросить к стандартному состоянию (равные карты)",
+            use_container_width=True,
+        ):
+            st.session_state.hp_reset_trigger = True
+            st.rerun()
+
+    st.markdown("---")
+
+    num_games = st.number_input(
+        "Количество игр в бенчмарке",
+        min_value=10,
+        max_value=10000,
+        value=100,
+        step=10,
+        key="hp_ngames",
+    )
+
+    if st.button("▶️ Запустить бенчмарк", type="primary", use_container_width=True):
+        rules = RulesConfig(
+            hand_size_first=hand_size_first,
+            hand_size_second=hand_size_second,
+            cards_drawn_per_turn=cards_drawn_per_turn,
+            rounds=rounds,
+            guarantee_card_types=guarantee_card_types,
+            second_extra_draw_t1=second_extra_draw_t1,
+            first_turn_pass_restriction=first_turn_pass_restriction,
+            mulligan_enabled=mulligan_enabled,
+            second_player_bonus_gold=second_player_bonus_gold,
+            hand_limit=hand_limit,
+        )
+        config = GameConfig(rules=rules)
+
+        agent1_class = BUILTIN_AGENTS[agent1_choice]
+        agent2_class = BUILTIN_AGENTS[agent2_choice]
+        agent1_name = agent1_choice.capitalize()
+        agent2_name = agent2_choice.capitalize()
+        if agent1_name == agent2_name:
+            agent1_name = f"{agent1_name} (P0)"
+            agent2_name = f"{agent2_name} (P1)"
+
+        progress_bar = st.progress(0, text="Запуск игр...")
+        status_text = st.empty()
+
+        result = run_hyperparam_benchmark(
+            agent1_class=agent1_class,
+            agent2_class=agent2_class,
+            num_games=num_games,
+            config=config,
+            agent1_name=agent1_name,
+            agent2_name=agent2_name,
+        )
+
+        progress_bar.empty()
+        status_text.empty()
+
+        st.markdown("#### 📊 Результаты")
+
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            pct1 = (
+                100 * result.wins[agent1_name] / result.total_games
+                if result.total_games > 0
+                else 0
+            )
+            st.metric(
+                f"🏆 Побед ({agent1_name})", f"{result.wins[agent1_name]} ({pct1:.1f}%)"
+            )
+        with col_s2:
+            pct_d = (
+                100 * result.wins["draw"] / result.total_games
+                if result.total_games > 0
+                else 0
+            )
+            st.metric("🤝 Ничьих", f"{result.wins['draw']} ({pct_d:.1f}%)")
+        with col_s3:
+            pct2 = (
+                100 * result.wins[agent2_name] / result.total_games
+                if result.total_games > 0
+                else 0
+            )
+            st.metric(
+                f"🏆 Побед ({agent2_name})", f"{result.wins[agent2_name]} ({pct2:.1f}%)"
+            )
+
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        with col_m1:
+            st.metric("Всего игр", result.total_games)
+        with col_m2:
+            st.metric("Всего ходов", result.total_turns)
+        with col_m3:
+            st.metric("Время", f"{result.elapsed_time:.2f} сек")
+        with col_m4:
+            st.metric("Игр/сек", f"{result.games_per_second:.1f}")
+
+        if result.total_errors > 0:
+            st.warning(f"⚠️ Ошибок: {result.total_errors}")
+
+        st.markdown("#### 📈 Динамика винрейта")
+        st.markdown(
+            "График показывает, как меняется процент побед каждого бота "
+            "по мере увеличения количества сыгранных игр."
+        )
+
+        chart_data = []
+        for i in range(result.total_games):
+            chart_data.append(
+                {
+                    "Игра": i + 1,
+                    agent1_name: result.winrate_history[agent1_name][i],
+                    agent2_name: result.winrate_history[agent2_name][i],
+                }
+            )
+
+        if chart_data:
+            import pandas as pd
+
+            df = pd.DataFrame(chart_data)
+            df = df.set_index("Игра")
+            st.line_chart(df)
+
+        st.markdown("---")
+        st.markdown(
+            "💡 **Вывод**: если винрейты обоих ботов близки к 50%, "
+            "систему можно считать сбалансированной для данных гиперпараметров."
+        )
 
 
 def main():

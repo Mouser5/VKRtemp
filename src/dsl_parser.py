@@ -310,7 +310,7 @@ class DSLActionValidator:
         return False
 
 
-def encode_game_state_dsl(game: "Game", player_id: int) -> str:
+def encode_game_state_dsl(game: "Game", player_id: int) -> str:  # noqa: F821
     from board import BoardEngine
 
     board_dict = {}

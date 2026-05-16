@@ -54,7 +54,7 @@ class HeuristicRobot:
     ) -> AgentAction:
         opponent_id = 1 - self.player_id
         player_state = game.state.players[self.player_id]
-        opponent_state = game.state.players[opponent_id]
+        game.state.players[opponent_id]
 
         # === ПРИОРИТЕТ 1: Чиним инструменты ===
         if player_state.broken_equipments:

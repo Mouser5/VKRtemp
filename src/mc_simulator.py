@@ -218,7 +218,7 @@ def run_simulation(
         scores0.append(r.scores[0])
         scores1.append(r.scores[1])
 
-    total_games_played = sum(wins.values()) + draw
+    sum(wins.values()) + draw
 
     n_valid = n_games - errors
     avg_scores = {

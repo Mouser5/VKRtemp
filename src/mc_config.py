@@ -58,6 +58,13 @@ class RulesConfig:
     hand_size_second: int = 5
     cards_drawn_per_turn: int = 1
 
+    guarantee_card_types: bool = False
+    second_extra_draw_t1: bool = False
+    first_turn_pass_restriction: bool = False
+    mulligan_enabled: bool = False
+    second_player_bonus_gold: int = 0
+    hand_limit: int = 0
+
 
 @dataclass
 class BoardConfig:

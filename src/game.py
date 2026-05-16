@@ -17,6 +17,7 @@ from actions import (
     ActionPlayBoardUtility,
     ActionPlayPlayerUtility,
     ActionDiscard,
+    ActionMulligan,
 )
 from state import (
     MatchState,
@@ -46,7 +47,6 @@ class Game:
 
         self.state.first_player_in_round = random.randint(0, 1)
         self.state.current_player_id = self.state.first_player_in_round
-        self.config = config if config is not None else None
 
         self._initial_deck_templates = None
         self._initial_gold_deck = None
@@ -55,12 +55,28 @@ class Game:
         self._setup_board(self.config.gold, self.config.board.start_positions)
         self._deal_initial_cards(self.config.rules)
 
+        if self.config.rules.second_player_bonus_gold > 0:
+            second_player = 1 - self.state.first_player_in_round
+            self.state.total_scores[second_player] += (
+                self.config.rules.second_player_bonus_gold
+            )
+
     def _build_decks(self, deck_cfg: DeckConfig):
         deck_template_ids = []
         counts = asdict(deck_cfg)
 
+        tunnel_corner_variants = ["tunnel_corner_dl", "tunnel_corner_ul"]
+
         for t_id, count in counts.items():
-            deck_template_ids.extend([t_id] * count)
+            if t_id == "tunnel_corner":
+                half = count // 2
+                remainder = count % 2
+                deck_template_ids.extend(
+                    [tunnel_corner_variants[0]] * (half + remainder)
+                )
+                deck_template_ids.extend([tunnel_corner_variants[1]] * half)
+            else:
+                deck_template_ids.extend([t_id] * count)
 
         gold_deck = self.config.gold.gold_templates.copy()
 
@@ -91,6 +107,69 @@ class Game:
                     template_id=g_id, owner_id=None, unique_id=gold_start_id + i
                 )
 
+    def _categorize_template(self, template_id: str) -> str:
+        template = REGISTRY.get(template_id)
+        if isinstance(template, TunnelCardTemplate):
+            return "tunnel"
+        if isinstance(template, ActionCardTemplate):
+            if template.action_type == ActionType.REPAIR:
+                return "repair"
+            if template.action_type == ActionType.SABOTAGE:
+                return "sabotage"
+            if template.action_type in (
+                ActionType.KEY,
+                ActionType.ROCKFALL,
+                ActionType.MAP,
+            ):
+                return "utility"
+        if isinstance(template, DoorCardTemplate):
+            return "door"
+        if isinstance(template, LadderCardTemplate):
+            return "ladder"
+        return "other"
+
+    def _deal_with_guarantee(self, p_id: int, cards_count: int):
+        player = self.state.players[p_id]
+        guarantee_categories = ["tunnel", "repair", "sabotage"]
+
+        deck_items = list(zip(self.state.deck, self.state.deck_template_ids))
+
+        categorized: dict = {}
+        for cid, t_id in deck_items:
+            cat = self._categorize_template(t_id)
+            if cat not in categorized:
+                categorized[cat] = []
+            categorized[cat].append((cid, t_id))
+
+        picked = []
+        for cat in guarantee_categories:
+            if categorized.get(cat):
+                picked.append(categorized[cat].pop(0))
+
+        remaining_pool = []
+        for cat in guarantee_categories:
+            remaining_pool.extend(categorized.get(cat, []))
+        remaining_pool.extend(categorized.get("utility", []))
+        remaining_pool.extend(categorized.get("door", []))
+        remaining_pool.extend(categorized.get("ladder", []))
+        remaining_pool.extend(categorized.get("other", []))
+
+        needed = cards_count - len(picked)
+        picked.extend(remaining_pool[:needed])
+
+        taken_ids = {cid for cid, _ in picked}
+        player.hand = [cid for cid, _ in picked]
+        player.card_id_to_template = {cid: t_id for cid, t_id in picked}
+
+        new_deck, new_templates = [], []
+        for cid, t_id in deck_items:
+            if cid not in taken_ids:
+                new_deck.append(cid)
+                new_templates.append(t_id)
+
+        self.state.deck = new_deck
+        self.state.deck_template_ids = new_templates
+
     def _deal_initial_cards(self, rules_cfg: RulesConfig):
         second_player = 1 - self.state.first_player_in_round
         for p_id in [0, 1]:
@@ -99,7 +178,19 @@ class Game:
                 if p_id == second_player
                 else rules_cfg.hand_size_first
             )
-            for _ in range(cards_count):
+            if rules_cfg.guarantee_card_types:
+                self._deal_with_guarantee(p_id, cards_count)
+            else:
+                for _ in range(cards_count):
+                    if self.state.deck:
+                        card_id = self.state.deck.pop()
+                        template_id = self.state.deck_template_ids.pop(0)
+                        self.state.players[p_id].hand.append(card_id)
+                        self.state.players[p_id].card_id_to_template[card_id] = (
+                            template_id
+                        )
+
+            if rules_cfg.second_extra_draw_t1 and p_id == second_player:
                 if self.state.deck:
                     card_id = self.state.deck.pop()
                     template_id = self.state.deck_template_ids.pop(0)
@@ -126,11 +217,11 @@ class Game:
         player.hand = card_ids.copy()
         player.card_id_to_template = dict(zip(card_ids, template_ids))
 
-    def step(self, action: AgentAction) -> Tuple[bool, str, Optional[int]]:
+    def step(self, action: AgentAction) -> Tuple[bool, str, Optional[int], str]:
         if self.is_game_over():
             return False, "Игра уже окончена.", None, ""
         template_id = ""
-        if not isinstance(action, ActionDiscard):
+        if not isinstance(action, (ActionDiscard, ActionMulligan)):
             p_id = self.state.current_player_id
             player_state = self.state.players[p_id]
             lookup_key = (
@@ -147,12 +238,21 @@ class Game:
             success, msg, rev_gold = self._handle_player_utility(action)
         elif isinstance(action, ActionDiscard):
             success, msg, rev_gold = self._handle_discard(action)
+        elif isinstance(action, ActionMulligan):
+            success, msg, rev_gold = self._handle_mulligan()
         else:
             return False, "Неизвестный тип действия.", None, ""
 
         if success:
+            acting_player = self.state.current_player_id
             self.state.current_player_id = 1 - self.state.current_player_id
             self.state.turn_number += 1
+
+            if self.config.rules.hand_limit > 0:
+                player = self.state.players[acting_player]
+                while len(player.hand) > self.config.rules.hand_limit:
+                    excess = player.hand.pop()
+                    del player.card_id_to_template[excess]
 
         return success, msg, rev_gold, template_id
 
@@ -370,6 +470,31 @@ class Game:
 
         return True, msg, None
 
+    def _handle_mulligan(self) -> Tuple[bool, str, Optional[int]]:
+        p_id = self.state.current_player_id
+        player = self.state.players[p_id]
+        hand_size = len(player.hand)
+
+        returned = [
+            (cid, player.card_id_to_template.pop(cid)) for cid in list(player.hand)
+        ]
+        player.hand.clear()
+
+        random.shuffle(returned)
+        for cid, t_id in returned:
+            self.state.deck.append(cid)
+            self.state.deck_template_ids.append(t_id)
+
+        for _ in range(hand_size):
+            if self.state.deck:
+                card_id = self.state.deck.pop()
+                template_id = self.state.deck_template_ids.pop()
+                player.hand.append(card_id)
+                player.card_id_to_template[card_id] = template_id
+
+        player.mulligan_used = True
+        return True, f"Игрок {p_id} сделал пересдачу руки.", None
+
     def _check_and_reveal_gold(
         self, x: int, y: int, placed_card: PlacedCard
     ) -> Optional[int]:
@@ -437,6 +562,13 @@ class Game:
             if tpl not in template_to_card_ids:
                 template_to_card_ids[tpl] = []
             template_to_card_ids[tpl].append(cid)
+
+        skip_sabotage_repair = (
+            self.config.rules.first_turn_pass_restriction
+            and self.state.round_number == 1
+            and self.state.turn_number == 1
+            and p_id == self.state.first_player_in_round
+        )
 
         for template_id, card_ids_list in template_to_card_ids.items():
             try:
@@ -545,10 +677,11 @@ class Game:
                                 )
                                 break
 
-            elif isinstance(template, ActionCardTemplate) and template.action_type in [
-                ActionType.SABOTAGE,
-                ActionType.REPAIR,
-            ]:
+            elif (
+                isinstance(template, ActionCardTemplate)
+                and template.action_type in [ActionType.SABOTAGE, ActionType.REPAIR]
+                and not skip_sabotage_repair
+            ):
                 eq = template.equipment_type
                 for target_p_id, target_state in self.state.players.items():
                     if (
@@ -574,7 +707,15 @@ class Game:
                             )
                             break
 
-        # print(f"   [GAME DEBUG] Returning {len(legal_actions)} legal actions")
+        if (
+            self.config.rules.mulligan_enabled
+            and not player_state.mulligan_used
+            and self.state.round_number == 1
+            and self.state.turn_number == 1
+            and p_id == self.state.first_player_in_round
+        ):
+            legal_actions.append(ActionMulligan())
+
         return legal_actions
 
     def get_observation(self, target_player_id: int) -> ObservableMatchState:
@@ -621,13 +762,20 @@ class Game:
         )
         if unrevealed_gold == 0:
             return True
-        if (not self.state.deck and
-                (not self.state.players[1].card_id_to_template or
-                 all("rep_" in word or "brk_" in word or "act_" in word for word in
-                     self.state.players[1].card_id_to_template.values()) and
-                 (not self.state.players[0].card_id_to_template or
-                  all("rep_" in word or "brk_" in word or "act_" in word for word in
-                      self.state.players[0].card_id_to_template.values())))):
+        if not self.state.deck and (
+            not self.state.players[1].card_id_to_template
+            or all(
+                "rep_" in word or "brk_" in word or "act_" in word
+                for word in self.state.players[1].card_id_to_template.values()
+            )
+            and (
+                not self.state.players[0].card_id_to_template
+                or all(
+                    "rep_" in word or "brk_" in word or "act_" in word
+                    for word in self.state.players[0].card_id_to_template.values()
+                )
+            )
+        ):
             return True
         return False
 

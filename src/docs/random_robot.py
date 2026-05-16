@@ -6,7 +6,6 @@
 """
 
 import random
-from typing import Optional
 
 
 class RandomRobot:

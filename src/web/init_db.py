@@ -1,10 +1,29 @@
+import time
+
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 from config import DATABASE_URL
 
+RETRY_MAX = 10
+RETRY_DELAY = 2  # seconds
+
+
+def _wait_for_db():
+    for attempt in range(1, RETRY_MAX + 1):
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            conn.close()
+            return
+        except Exception:
+            if attempt < RETRY_MAX:
+                time.sleep(RETRY_DELAY)
+            else:
+                raise
+
 
 def create_tables():
+    _wait_for_db()
     conn = psycopg2.connect(DATABASE_URL)
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     cursor = conn.cursor()

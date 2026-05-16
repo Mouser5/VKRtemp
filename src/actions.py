@@ -38,6 +38,16 @@ class ActionDiscard(BaseModel):
     repair_equipment: Optional[EquipmentType] = None
 
 
+class ActionMulligan(BaseModel):
+    """Действие: Пересдача стартовой руки (mulligan)."""
+
+    type: Literal["mulligan"] = "mulligan"
+
+
 AgentAction = Union[
-    ActionBuild, ActionPlayBoardUtility, ActionPlayPlayerUtility, ActionDiscard
+    ActionBuild,
+    ActionPlayBoardUtility,
+    ActionPlayPlayerUtility,
+    ActionDiscard,
+    ActionMulligan,
 ]

@@ -1,6 +1,5 @@
 # tests/test_bot_loading.py
 import sys
-import os
 from pathlib import Path
 
 # Добавляем путь к src в sys.path
@@ -8,8 +7,8 @@ src_path = Path(__file__).parent.parent / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-import pytest
-from web.agent_validator import AgentValidator, ValidationResult
+import pytest  # noqa: E402
+from web.agent_validator import AgentValidator  # noqa: E402
 
 
 class TestValidBotLoading:
@@ -31,10 +30,10 @@ class RandomBot:
         return random.choice(legal_actions)
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert len(result.errors) == 0
         assert result.class_name == "RandomBot"
-        assert result.has_choose_action == True
+        assert result.has_choose_action
 
     def test_full_featured_bot(self):
         """✅ Бот с полной реализацией и документацией"""
@@ -64,9 +63,9 @@ class SmartBot:
         return random.choice(legal_actions)
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert len(result.errors) == 0
-        assert result.has_choose_action == True
+        assert result.has_choose_action
 
     def test_bot_with_extra_attributes(self):
         """✅ Бот с дополнительными атрибутами класса"""
@@ -86,7 +85,7 @@ class EnhancedBot:
         return random.choice(actions) if actions else None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert result.class_name == "EnhancedBot"
 
     def test_bot_with_private_methods(self):
@@ -112,7 +111,7 @@ class BotWithHelpers:
         return self._select_best(filtered)
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 class TestSyntaxErrors:
@@ -130,21 +129,21 @@ class BadBot:
         # Убрана закрывающая скобка класса
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert any("Синтаксическая ошибка" in error for error in result.errors)
 
     def test_syntax_error_unclosed_quote(self):
         """❌ Незакрытая кавычка"""
-        code = '''
+        code = """
 class BadBot:
     def __init__(self, player_id: int):
         self.name = "Unclosed string
 
     def choose_action(self, game):
         return None
-'''
+"""
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert any("Синтаксическая ошибка" in error for error in result.errors)
 
     def test_syntax_error_bad_indentation(self):
@@ -158,7 +157,7 @@ self.player_id = player_id
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert any("Синтаксическая ошибка" in error for error in result.errors)
 
     def test_syntax_error_invalid_operator(self):
@@ -172,7 +171,7 @@ class BadBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
 
 class TestMissingStructure:
@@ -185,7 +184,7 @@ def choose_action(game):
     return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "Не найден класс агента" in result.errors[0]
 
     def test_multiple_classes_first_has_choose_action(self):
@@ -202,7 +201,7 @@ class WorkingBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert result.class_name == "WorkingBot"
 
     def test_class_without_choose_action(self):
@@ -216,7 +215,7 @@ class BadBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "Не найден класс агента" in result.errors[0]
 
     def test_choose_action_is_attribute_not_method(self):
@@ -228,7 +227,7 @@ class BadBot:
         self.choose_action = 42  # Это не метод!
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "должен быть методом" in result.errors[0]
 
 
@@ -246,7 +245,7 @@ class BadBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "должен принимать параметр 'game'" in result.errors[0]
 
     def test_choose_action_no_params(self):
@@ -256,7 +255,7 @@ class BadBot:
     choose_action = lambda: None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_choose_action_wrong_param_name(self):
         """❌ choose_action принимает другое имя параметра"""
@@ -269,7 +268,7 @@ class BadBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "должен принимать параметр 'game'" in result.errors[0]
 
     def test_choose_action_with_required_keyword_only_arg(self):
@@ -284,7 +283,7 @@ class BadBot:
 """
         result = AgentValidator.validate_agent_class_from_code(code)
         # Это должно пройти, так как параметр game присутствует
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 class TestInitialization:
@@ -302,7 +301,7 @@ class BotWithoutPlayerId:
 """
         result = AgentValidator.validate_agent_class_from_code(code)
         # Это будет валидно, но с warning
-        assert result.has_choose_action == True
+        assert result.has_choose_action
 
     def test_init_with_default_player_id(self):
         """✅ __init__ с параметром по умолчанию"""
@@ -315,7 +314,7 @@ class BotWithDefault:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_init_with_additional_params(self):
         """✅ __init__ с дополнительными параметрами"""
@@ -330,7 +329,7 @@ class BotWithExtra:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 class TestRuntimeErrors:
@@ -349,7 +348,7 @@ class BotWithBadImport:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "Ошибка при загрузке кода" in result.errors[0]
 
     def test_undefined_variable_reference(self):
@@ -365,7 +364,7 @@ class BotWithBadRef:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
 
 class TestEdgeCases:
@@ -386,7 +385,7 @@ class DocumentedBot:
         return None
 '''
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_inheriting_from_parent_class(self):
         """✅ Бот, наследующий от базового класса"""
@@ -402,7 +401,7 @@ class InheritedBot(BaseAgent):
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_empty_choose_action(self):
         """✅ Бот с пустым choose_action"""
@@ -415,7 +414,7 @@ class MinimalBot:
         pass
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_async_method(self):
         """✅ Бот с async методом (не choose_action)"""
@@ -431,7 +430,7 @@ class BotWithAsync:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_staticmethod(self):
         """✅ Бот со статическими методами"""
@@ -448,7 +447,7 @@ class BotWithStatic:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_classmethod(self):
         """✅ Бот с методом класса"""
@@ -467,7 +466,7 @@ class BotWithClassMethod:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_properties(self):
         """✅ Бот с properties"""
@@ -484,19 +483,19 @@ class BotWithProperty:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_empty_code(self):
         """❌ Пустой код"""
         code = ""
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_only_whitespace(self):
         """❌ Только пробельные символы"""
         code = "   \n  \n  "
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_only_comments(self):
         """❌ Только комментарии"""
@@ -506,7 +505,7 @@ class BotWithProperty:
 # И ещё один
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_bot_with_unicode_names(self):
         """✅ Бот с Unicode символами в имени переменной"""
@@ -520,7 +519,7 @@ class БотВтехУправлении:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert result.class_name == "БотВтехУправлении"
 
 
@@ -572,7 +571,7 @@ class HeuristicBot:
         return random.choice(legal_actions)
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
         assert result.class_name == "HeuristicBot"
 
     def test_bot_with_state_management(self):
@@ -606,7 +605,7 @@ class StatefulBot:
         return action
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_bot_with_learning_mechanism(self):
         """✅ Бот с механизмом обучения"""
@@ -636,7 +635,7 @@ class LearningBot:
         return random.choice(legal_actions)
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 class TestValidationResultDetails:
@@ -654,12 +653,12 @@ class TestBot:
 """
         result = AgentValidator.validate_agent_class_from_code(code)
 
-        assert hasattr(result, 'is_valid')
-        assert hasattr(result, 'errors')
-        assert hasattr(result, 'warnings')
-        assert hasattr(result, 'class_name')
-        assert hasattr(result, 'has_choose_action')
-        assert hasattr(result, 'has_player_id_param')
+        assert hasattr(result, "is_valid")
+        assert hasattr(result, "errors")
+        assert hasattr(result, "warnings")
+        assert hasattr(result, "class_name")
+        assert hasattr(result, "has_choose_action")
+        assert hasattr(result, "has_player_id_param")
 
     def test_error_messages_are_informative(self):
         """✅ Сообщения об ошибках информативны"""
@@ -669,7 +668,7 @@ class BadBot:
         return None
 """
         result = AgentValidator.validate_agent_class_from_code(code)
-        assert result.is_valid == False
+        assert not result.is_valid
         assert len(result.errors) > 0
         # Сообщение должно быть понятным
         assert any(len(error) > 10 for error in result.errors)
@@ -697,7 +696,7 @@ class MaliciousBot:
 
         # Валидация должна пройти (синтаксис правильный)
         # Но при ВЫПОЛНЕНИИ код будет в песочнице
-        assert result.is_valid == True  # ← Код формально корректен
+        assert result.is_valid  # ← Код формально корректен
 
         # ⚠️ ВАЖНО: Реальная защита от такого кода должна быть:
         # 1. На уровне REST API (не выполнять опасные операции)
@@ -721,7 +720,7 @@ class DangerousBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Ожидаемое поведение:
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "недопустимый импорт" in result.errors[0]
 
     def test_bot_cannot_import_subprocess(self):
@@ -740,7 +739,7 @@ class HackerBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "subprocess запрещён" in result.errors[0]
 
     def test_bot_cannot_import_socket(self):
@@ -761,7 +760,7 @@ class NetworkBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "socket запрещён" in result.errors[0]
 
     def test_bot_cannot_import_requests(self):
@@ -782,7 +781,7 @@ class SpyBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_bot_cannot_modify_game_object(self):
         """⚠️ Бот МОЖЕТ модифицировать game, но это будет обнаружено"""
@@ -800,7 +799,7 @@ class CheatingBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Валидация пройдёт (код синтаксически корректен)
-        assert result.is_valid == True
+        assert result.is_valid
 
         # ⚠️ НО: В runtime система должна:
         # 1. Откатить изменения через транзакции
@@ -828,32 +827,33 @@ class SnooperBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Валидация пройдёт
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🛡️ НОВАЯ КАТЕГОРИЯ: ТЕСТЫ НА ОПАСНЫЕ ИМПОРТЫ
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestDangerousImports:
     """🛡️ Проверяет, что бот не может импортировать опасные модули"""
 
     # Список опасных модулей, которые НУЖНО заблокировать
     FORBIDDEN_MODULES = [
-        'os',
-        'sys',
-        'subprocess',
-        'socket',
-        'requests',
-        'urllib',
-        'paramiko',
-        'ansible',
-        'ctypes',
-        'importlib',
-        'pickle',
-        'shelve',
-        'tempfile',
-        '__import__',
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "requests",
+        "urllib",
+        "paramiko",
+        "ansible",
+        "ctypes",
+        "importlib",
+        "pickle",
+        "shelve",
+        "tempfile",
+        "__import__",
     ]
 
     def test_detect_os_import(self):
@@ -862,7 +862,7 @@ class TestDangerousImports:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
         assert any("os" in e for e in result.errors)
 
     def test_detect_from_os_import(self):
@@ -881,7 +881,7 @@ class BadBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_detect_exec_usage(self):
         """❌ Обнаружить: exec() - выполнение кода в runtime"""
@@ -898,7 +898,7 @@ class DangerousBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
         assert "exec" in str(result.errors)
 
     def test_detect_eval_usage(self):
@@ -916,7 +916,7 @@ class EvalBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_detect_globals_modification(self):
         """❌ Обнаружить: попытка модифицировать globals()"""
@@ -933,7 +933,7 @@ class HackerBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
 
     def test_detect_getattr_on_builtins(self):
         """❌ Обнаружить: getattr(__builtins__, ...) - доступ к встроенным"""
@@ -951,7 +951,7 @@ class ExploitBot:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано!
-        assert result.is_valid == False
+        assert not result.is_valid
 
 
 class TestCodeInjectionPrevention:
@@ -972,12 +972,13 @@ class BotWithComments:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Комментарии игнорируются Python, так что это безопасно
-        assert result.is_valid == True
+        assert result.is_valid
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🎭 НОВАЯ КАТЕГОРИЯ: ТЕСТЫ НА ОБХОД ВАЛИДАЦИИ
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestValidationBypass:
     """🎭 Проверяет, что нельзя обойти валидацию"""
@@ -1002,7 +1003,7 @@ class Bot:
 
         # Это технически допустимый синтаксис
         # но MaliciousClass не используется в Bot
-        assert result.is_valid == True
+        assert result.is_valid
 
     def test_cannot_use_exec_in_choose_action(self):
         """❌ Бот не может использовать exec в choose_action"""
@@ -1023,7 +1024,7 @@ os.system("rm -rf /")
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Должно быть заблокировано или хотя бы залогировано!
-        assert result.is_valid == False or 'exec' in result.warnings
+        assert not result.is_valid or "exec" in result.warnings
 
     def test_cannot_use_lambda_for_code_execution(self):
         """⚠️ Бот может использовать lambda, но это контролируется"""
@@ -1044,7 +1045,8 @@ class BotWithLambda:
         result = AgentValidator.validate_agent_class_from_code(code)
 
         # Lambda допустимы, но попытка импорта os должна быть заблокирована
-        assert result.is_valid == False
+        assert not result.is_valid
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

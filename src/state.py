@@ -32,6 +32,7 @@ class PlayerState(BaseModel):
     known_secrets: Set[str] = Field(default_factory=set)
     ladders: Set[str] = Field(default_factory=set)
     card_id_to_template: Dict[int, str] = Field(default_factory=dict)
+    mulligan_used: bool = False
 
 
 class MatchState(BaseModel):

@@ -7,23 +7,23 @@ src_path = Path(__file__).parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-import requests
-import uvicorn
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+import requests  # noqa: E402
+import uvicorn  # noqa: E402
 
 sys.path.insert(0, str(src_path))
 
-from game import Game
-from actions import (
+from game import Game  # noqa: E402
+from actions import (  # noqa: E402
     AgentAction,
     ActionBuild,
     ActionPlayBoardUtility,
     ActionPlayPlayerUtility,
     ActionDiscard,
 )
-from dsl_parser import (
+from dsl_parser import (  # noqa: E402
     encode_game_state_dsl,
     decode_player_action_dsl,
     DSLActionValidator,
@@ -392,7 +392,7 @@ def submit_action(game_id: str, req: ActionRequest):
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
 
-    success, msg, gold = game.step(action)
+    success, msg, gold, _ = game.step(action)
 
     if not success:
         raise HTTPException(status_code=400, detail=msg)
@@ -514,7 +514,7 @@ def submit_action_json(game_id: str, req: ActionRequest):
             status_code=400, detail=f"Unknown action type: {action_type}"
         )
 
-    success, msg, gold = game.step(action)
+    success, msg, gold, _ = game.step(action)
 
     if not success:
         raise HTTPException(status_code=400, detail=msg)

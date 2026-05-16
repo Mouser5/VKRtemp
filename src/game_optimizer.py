@@ -2,9 +2,6 @@ import optuna
 import logging
 from game import Game
 from smart_agent import SmartAgent
-from src.cards import GoldCardTemplate
-from src.registry import REGISTRY
-from src.view import ConsoleView
 
 logging.getLogger().setLevel(logging.ERROR)
 # optuna.logging.set_verbosity(optuna.logging.WARNING)

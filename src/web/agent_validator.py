@@ -126,9 +126,6 @@ class AgentValidator:
         import math
         import sys
 
-        errors = []
-        warnings = []
-
         module_name = "temp_validation_module"
         try:
             if module_name in sys.modules:
